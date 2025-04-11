@@ -7,12 +7,18 @@ import re
 import json
 from fastapi.responses import JSONResponse
 from datetime import date
+import os
 
 app = FastAPI()
 
-# Config inladen vanuit je bestaande JSON-bestand
-with open("C:/Users/j.marges/Python testen/pythonProject1/Script/pgAdmin_BAG/config.json") as f:
-    config = json.load(f)["avalex_database"]
+# Config ophalen uit environment variables (geschikt voor Railway)
+config = {
+    "host": os.getenv("DB_HOST"),
+    "port": os.getenv("DB_PORT", 5432),
+    "dbname": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASS")
+}
 
 def get_connection():
     return psycopg2.connect(
@@ -28,7 +34,6 @@ class RouteResult(BaseModel):
     datum: date
     postcode: str
     huisnummer: str
-
 
 @app.get("/api/route", response_model=List[RouteResult])
 def get_route(
