@@ -51,64 +51,74 @@ def get_route(
         raise HTTPException(status_code=400, detail="Minimaal één fractie vereist.")
 
     like_clauses = " OR ".join(["A.INZAMELROUTE LIKE %s" for _ in fractie_list])
-    base_params = [f"%{f}%" for f in fractie_list] + [postcode, huisnummer_int]
+    params_base = [f"%{f}%" for f in fractie_list] + [postcode]
 
-    exact_match_query = f"""
-        SELECT 
-            I.INZAMELROUTE, 
-            I.DATUM,
-            A.POSTCODE,
-            A.HUISNUMMER,
-            A.HUISNUMMERTOEVOEGING
-        FROM
-            INZAMELROUTE AS I
-        LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE = I.INZAMELROUTE
-        WHERE
-            I.DATUM > CURRENT_DATE
-            AND ({like_clauses})
-            AND REPLACE(A.POSTCODE, ' ', '') = %s
-            AND A.HUISNUMMERTOEVOEGING IS NULL
-            AND A.HUISNUMMER::INT = %s
-        ORDER BY I.DATUM ASC
-        LIMIT 3
-    """
+    queries = [
+        # 1. Exact huisnummer zonder toevoeging
+        (
+            f"""
+            SELECT I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER, A.HUISNUMMERTOEVOEGING
+            FROM INZAMELROUTE AS I
+            LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE = I.INZAMELROUTE
+            WHERE I.DATUM > CURRENT_DATE
+              AND ({like_clauses})
+              AND REPLACE(A.POSTCODE, ' ', '') = %s
+              AND A.HUISNUMMER::INT = %s
+              AND A.HUISNUMMERTOEVOEGING IS NULL
+            ORDER BY I.DATUM ASC
+            LIMIT 3
+            """,
+            params_base + [huisnummer_int]
+        ),
 
-    fallback_query = f"""
-        SELECT 
-            I.INZAMELROUTE, 
-            I.DATUM,
-            A.POSTCODE,
-            A.HUISNUMMER,
-            A.HUISNUMMERTOEVOEGING
-        FROM
-            INZAMELROUTE AS I
-        LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE = I.INZAMELROUTE
-        WHERE
-            I.DATUM > CURRENT_DATE
-            AND ({like_clauses})
-            AND REPLACE(A.POSTCODE, ' ', '') = %s
-        ORDER BY ABS(A.HUISNUMMER::INT - %s), A.HUISNUMMERTOEVOEGING ASC, I.DATUM ASC
-        LIMIT 1
-    """
+        # 2. Exact huisnummer mét toevoeging
+        (
+            f"""
+            SELECT I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER, A.HUISNUMMERTOEVOEGING
+            FROM INZAMELROUTE AS I
+            LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE = I.INZAMELROUTE
+            WHERE I.DATUM > CURRENT_DATE
+              AND ({like_clauses})
+              AND REPLACE(A.POSTCODE, ' ', '') = %s
+              AND A.HUISNUMMER::INT = %s
+              AND A.HUISNUMMERTOEVOEGING IS NOT NULL
+            ORDER BY A.HUISNUMMERTOEVOEGING ASC, I.DATUM ASC
+            LIMIT 3
+            """,
+            params_base + [huisnummer_int]
+        ),
+
+        # 3. Dichtstbijzijndste andere huisnummers
+        (
+            f"""
+            SELECT I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER, A.HUISNUMMERTOEVOEGING
+            FROM INZAMELROUTE AS I
+            LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE = I.INZAMELROUTE
+            WHERE I.DATUM > CURRENT_DATE
+              AND ({like_clauses})
+              AND REPLACE(A.POSTCODE, ' ', '') = %s
+            ORDER BY ABS(A.HUISNUMMER::INT - %s), A.HUISNUMMERTOEVOEGING ASC, I.DATUM ASC
+            LIMIT 1
+            """,
+            params_base + [huisnummer_int]
+        )
+    ]
 
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-        # Eerst exact zoeken
-        cur.execute(exact_match_query, base_params)
-        rows = cur.fetchall()
-
-        # Zo niet, dan fallback zoeken met dichtstbijzijnde toevoeging
-        if not rows:
-            cur.execute(fallback_query, base_params)
+        for sql, params in queries:
+            cur.execute(sql, params)
             rows = cur.fetchall()
+            if rows:
+                cur.close()
+                conn.close()
+                return [dict(row) for row in rows]
 
         cur.close()
         conn.close()
-
-        return [dict(row) for row in rows] if rows else []
+        return []
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
