@@ -42,7 +42,6 @@ def get_route(
     huisnummer: str = Query(...),
     fracties: str = Query(...)
 ):
-    # Normaliseren input
     postcode = postcode.upper().replace(" ", "")
     fractie_list = [f.strip().upper() for f in fracties.split("/") if f.strip()]
     huisnummer_int = int(re.match(r"\d+", huisnummer).group()) if huisnummer else 0
@@ -51,11 +50,12 @@ def get_route(
         raise HTTPException(status_code=400, detail="Minimaal één fractie vereist.")
 
     like_clauses = " OR ".join(["A.INZAMELROUTE LIKE %s" for _ in fractie_list])
-    params = [f"%{f}%" for f in fractie_list] + [postcode, huisnummer_int]
+    base_params = [f"%{f}%" for f in fractie_list] + [postcode, huisnummer_int]
 
-    query = f"""
-        SELECT DISTINCT ON (I.DATUM)
+    exact_match_query = f"""
+        SELECT 
             I.INZAMELROUTE, 
+            I.DATUM,
             A.POSTCODE,
             A.HUISNUMMER,
             A.HUISNUMMERTOEVOEGING
@@ -66,22 +66,48 @@ def get_route(
             I.DATUM > CURRENT_DATE
             AND ({like_clauses})
             AND REPLACE(A.POSTCODE, ' ', '') = %s
-        ORDER BY I.DATUM ASC, ABS(A.HUISNUMMER::INT - %s), A.HUISNUMMERTOEVOEGING ASC
+            AND A.HUISNUMMERTOEVOEGING IS NULL
+            AND A.HUISNUMMER::INT = %s
+        ORDER BY I.DATUM ASC
         LIMIT 3
+    """
+
+    fallback_query = f"""
+        SELECT 
+            I.INZAMELROUTE, 
+            I.DATUM,
+            A.POSTCODE,
+            A.HUISNUMMER,
+            A.HUISNUMMERTOEVOEGING
+        FROM
+            INZAMELROUTE AS I
+        LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE = I.INZAMELROUTE
+        WHERE
+            I.DATUM > CURRENT_DATE
+            AND ({like_clauses})
+            AND REPLACE(A.POSTCODE, ' ', '') = %s
+        ORDER BY ABS(A.HUISNUMMER::INT - %s), A.HUISNUMMERTOEVOEGING ASC, I.DATUM ASC
+        LIMIT 1
     """
 
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cur.execute(query, params)
+
+        # Eerst exact zoeken
+        cur.execute(exact_match_query, base_params)
         rows = cur.fetchall()
+
+        # Zo niet, dan fallback zoeken met dichtstbijzijnde toevoeging
+        if not rows:
+            cur.execute(fallback_query, base_params)
+            rows = cur.fetchall()
+
         cur.close()
         conn.close()
 
-        if not rows:
-            return JSONResponse(content=[], status_code=200)
-
-        return [dict(row) for row in rows]
+        return [dict(row) for row in rows] if rows else []
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
