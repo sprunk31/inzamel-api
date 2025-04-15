@@ -67,7 +67,7 @@ def get_route(
             I.DATUM > CURRENT_DATE
             AND ({like_clauses})
             AND REPLACE(A.POSTCODE, ' ', '') = %s
-        ORDER BY ABS(A.HUISNUMMER::INT - %s), I.DATUM ASC
+        ORDER BY ABS(A.HUISNUMMER::INT - %s), I.DATUM ASC, A.HUISNUMMERTOEVOEGING ASC
         LIMIT 3
     """
 
