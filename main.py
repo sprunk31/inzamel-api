@@ -34,6 +34,7 @@ class RouteResult(BaseModel):
     datum: date
     postcode: str
     huisnummer: str
+    huisnummertoevoeging: str = None
 
 @app.get("/api/route", response_model=List[RouteResult])
 def get_route(
@@ -57,7 +58,8 @@ def get_route(
             I.INZAMELROUTE, 
             I.DATUM,
             A.POSTCODE,
-            A.HUISNUMMER
+            A.HUISNUMMER,
+            A.HUISNUMMERTOEVOEGING
         FROM
             INZAMELROUTE AS I
         LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE = I.INZAMELROUTE
