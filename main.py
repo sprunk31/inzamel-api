@@ -54,9 +54,8 @@ def get_route(
     params = [f"%{f}%" for f in fractie_list] + [postcode, huisnummer_int]
 
     query = f"""
-        SELECT 
+        SELECT DISTINCT ON (I.DATUM)
             I.INZAMELROUTE, 
-            I.DATUM,
             A.POSTCODE,
             A.HUISNUMMER,
             A.HUISNUMMERTOEVOEGING
@@ -67,7 +66,7 @@ def get_route(
             I.DATUM > CURRENT_DATE
             AND ({like_clauses})
             AND REPLACE(A.POSTCODE, ' ', '') = %s
-        ORDER BY ABS(A.HUISNUMMER::INT - %s), I.DATUM ASC, A.HUISNUMMERTOEVOEGING ASC
+        ORDER BY I.DATUM ASC, ABS(A.HUISNUMMER::INT - %s), A.HUISNUMMERTOEVOEGING ASC
         LIMIT 3
     """
 
