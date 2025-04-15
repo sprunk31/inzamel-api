@@ -54,29 +54,19 @@ def get_route(
     params = [f"%{f}%" for f in fractie_list] + [postcode, huisnummer_int]
 
     query = f"""
-        WITH filtered AS (
-    SELECT 
-        I.INZAMELROUTE, 
-        I.DATUM, 
-        A.POSTCODE, 
-        A.HUISNUMMER, 
-        ABS(A.HUISNUMMER::INT - %(huisnummer)s) AS diff,
-        A.HUISNUMERTOEVOEGING
-        FROM INZAMELROUTE AS I
-        LEFT JOIN AANSLUITING_INZAMELROUTE AS A 
-        ON A.INZAMELROUTE = I.INZAMELROUTE
-    WHERE I.DATUM > CURRENT_DATE
-      AND (
-            -- Stel hier je dynamische LIKE condities in voor de fracties, bijvoorbeeld:
-            A.INZAMELROUTE LIKE %(like_clause_1)s
-            -- eventueel extra condities met OR voor meerdere fracties
-          )
-      AND REPLACE(A.POSTCODE, ' ', '') = %(postcode)s
-)
-SELECT INZAMELROUTE, DATUM, POSTCODE, HUISNUMMER
-FROM filtered
-WHERE diff = (SELECT MIN(diff) FROM filtered)
-ORDER BY A.HUISNUMERTOEVOEGING, DATUM ASC
+        SELECT 
+            I.INZAMELROUTE, 
+            I.DATUM,
+            A.POSTCODE,
+            A.HUISNUMMER
+        FROM
+            INZAMELROUTE AS I
+        LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE = I.INZAMELROUTE
+        WHERE
+            I.DATUM > CURRENT_DATE
+            AND ({like_clauses})
+            AND REPLACE(A.POSTCODE, ' ', '') = %s
+        ORDER BY ABS(A.HUISNUMMER::INT - %s), A.HUISNUMMERTOEVOEGING, I.DATUM ASC
         LIMIT 3
     """
 
