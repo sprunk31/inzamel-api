@@ -34,7 +34,7 @@ class RouteResult(BaseModel):
     datum: date
     postcode: str
     huisnummer: str
-    huisnummertoevoeging: Optional[str] = None
+
 
 @app.get("/api/route", response_model=List[RouteResult])
 def get_route(
