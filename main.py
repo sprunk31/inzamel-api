@@ -4,7 +4,6 @@ from pydantic import BaseModel
 import psycopg2
 import psycopg2.extras
 import re
-import json
 from fastapi.responses import JSONResponse
 from datetime import date
 import os
