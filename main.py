@@ -8,6 +8,7 @@ import json
 from fastapi.responses import JSONResponse
 from datetime import date
 import os
+from typing import Optional
 
 app = FastAPI()
 
@@ -34,7 +35,7 @@ class RouteResult(BaseModel):
     datum: date
     postcode: str
     huisnummer: str
-    huisnummertoevoeging: str = None
+    huisnummertoevoeging: Optional[str] = None
 
 @app.get("/api/route", response_model=List[RouteResult])
 def get_route(
