@@ -90,7 +90,7 @@ def get_route(
                     AND REPLACE(A.POSTCODE, ' ', '') = %s
                     AND ABS(A.HUISNUMMER::INT - %s) = %s
                 ORDER BY I.DATUM ASC
-                LIMIT 3
+                LIMIT 1
             """, base_params + [huisnummer_int, offset])
 
             result = cur.fetchone()
@@ -107,14 +107,34 @@ def get_route(
                 """, [postcode, hn, toevoeging, referentie_pakket])
 
                 if cur.fetchone():
+                    # Haal 3 datums op voor deze inzamelroute
+                    cur.execute("""
+                        SELECT 
+                            I.INZAMELROUTE, 
+                            I.DATUM,
+                            A.POSTCODE,
+                            A.HUISNUMMER
+                        FROM
+                            INZAMELROUTE AS I
+                        LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE_ID = I.ID
+                        WHERE I.INZAMELROUTE = %s
+                        ORDER BY I.DATUM ASC
+                        LIMIT 3
+                    """, [result["inzamelroute"]])
+
+                    rows = cur.fetchall()
                     cur.close()
                     conn.close()
-                    return [{
-                        "inzamelroute": result["inzamelroute"],
-                        "datum": result["datum"],
-                        "postcode": result["postcode"],
-                        "huisnummer": result["huisnummer"]
-                    }]
+
+                    return [
+                        {
+                            "inzamelroute": row["inzamelroute"],
+                            "datum": row["datum"],
+                            "postcode": row["postcode"],
+                            "huisnummer": row["huisnummer"]
+                        }
+                        for row in rows
+                    ]
 
             offset += 1
 
