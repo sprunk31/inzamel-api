@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Query, HTTPException
-from typing import List, Union
+from typing import List, Optional
 from pydantic import BaseModel
 import psycopg2
 import psycopg2.extras
@@ -7,11 +7,9 @@ import re
 from fastapi.responses import JSONResponse
 from datetime import date
 import os
-from typing import Optional
 
 app = FastAPI()
 
-# Config ophalen uit environment variables (geschikt voor Railway)
 config = {
     "host": os.getenv("DB_HOST"),
     "port": os.getenv("DB_PORT", 5432),
@@ -32,8 +30,8 @@ def get_connection():
 class RouteResult(BaseModel):
     inzamelroute: str
     datum: date
-    postcode: str
-    huisnummer: str
+    postcode: Optional[str] = None
+    huisnummer: Optional[str] = None
     melding: Optional[str] = None
 
 @app.get("/api/route", response_model=List[RouteResult])
@@ -56,7 +54,6 @@ def get_route(
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-        # Stap 1: Haal pakket op van opgegeven adres
         cur.execute("""
             SELECT pakket FROM AANSLUITING_PAKKET
             WHERE REPLACE(postcode, ' ', '') = %s AND huisnummer::INT = %s AND huisnummertoevoeging IS NULL
@@ -77,11 +74,9 @@ def get_route(
                     A.POSTCODE,
                     A.HUISNUMMER,
                     A.HUISNUMMERTOEVOEGING
-                FROM
-                    INZAMELROUTE AS I
+                FROM INZAMELROUTE AS I
                 LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE_ID = I.ID
-                WHERE
-                    I.DATUM > CURRENT_DATE
+                WHERE I.DATUM > CURRENT_DATE
                     AND ({like_clauses})
                     AND REPLACE(A.POSTCODE, ' ', '') = %s
                     AND ABS(A.HUISNUMMER::INT - %s) = %s
@@ -94,7 +89,6 @@ def get_route(
                 hn = int(result["huisnummer"])
                 toevoeging = result["huisnummertoevoeging"]
 
-                # Controleer of pakket hetzelfde is
                 cur.execute("""
                     SELECT pakket FROM AANSLUITING_PAKKET
                     WHERE REPLACE(postcode, ' ', '') = %s AND huisnummer::INT = %s AND huisnummertoevoeging IS NOT DISTINCT FROM %s
@@ -106,38 +100,22 @@ def get_route(
                 if pakket_check and referentie_pakket and pakket_check["pakket"] == referentie_pakket:
                     gevonden_route = result["inzamelroute"]
                     cur.execute("""
-                        SELECT 
-                            I.INZAMELROUTE,
-                            I.DATUM,
-                            A.POSTCODE,
-                            A.HUISNUMMER
-                        FROM
-                            INZAMELROUTE AS I
+                        SELECT I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER
+                        FROM INZAMELROUTE AS I
                         LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE_ID = I.ID
-                        WHERE
-                            I.INZAMELROUTE = %s
-                            AND REPLACE(A.POSTCODE, ' ', '') = %s
-                            AND A.HUISNUMMER::INT = %s
+                        WHERE I.INZAMELROUTE = %s AND REPLACE(A.POSTCODE, ' ', '') = %s AND A.HUISNUMMER::INT = %s
                         ORDER BY I.DATUM ASC
                         LIMIT 3
                     """, [gevonden_route, postcode, hn])
                     rows = cur.fetchall()
                     cur.close()
                     conn.close()
-                    return [
-                        {
-                            "inzamelroute": row["inzamelroute"],
-                            "datum": row["datum"],
-                            "postcode": row["postcode"],
-                            "huisnummer": row["huisnummer"]
-                        } for row in rows
-                    ]
+                    return [{"inzamelroute": row["inzamelroute"], "datum": row["datum"], "postcode": row["postcode"], "huisnummer": row["huisnummer"]} for row in rows]
                 elif not fallback_result:
                     fallback_result = {
                         "inzamelroute": result["inzamelroute"],
                         "postcode": result["postcode"],
-                        "huisnummer": result["huisnummer"],
-                        "huisnummertoevoeging": toevoeging
+                        "huisnummer": result["huisnummer"]
                     }
 
             offset += 1
@@ -145,35 +123,20 @@ def get_route(
         if fallback_result:
             gevonden_route = fallback_result["inzamelroute"]
             cur.execute("""
-                SELECT 
-                    I.INZAMELROUTE,
-                    I.DATUM,
-                    A.POSTCODE,
-                    A.HUISNUMMER
-                FROM
-                    INZAMELROUTE AS I
-                LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE_ID = I.ID
-                WHERE
-                    I.INZAMELROUTE = %s
-                    AND REPLACE(A.POSTCODE, ' ', '') = %s
-                    AND A.HUISNUMMER::INT = %s
+                SELECT I.INZAMELROUTE, I.DATUM
+                FROM INZAMELROUTE AS I
+                WHERE I.INZAMELROUTE = %s AND I.DATUM > CURRENT_DATE
                 ORDER BY I.DATUM ASC
                 LIMIT 3
-            """, [gevonden_route, fallback_result["postcode"], int(fallback_result["huisnummer"])])
-
+            """, [gevonden_route])
             rows = cur.fetchall()
             cur.close()
             conn.close()
-
-            return [
-                {
-                    "inzamelroute": row["inzamelroute"],
-                    "datum": row["datum"],
-                    "postcode": row["postcode"],
-                    "huisnummer": row["huisnummer"],
-                    "melding": "Let op: pakket komt niet overeen met uw adres. Mogelijk moet dit worden aangepast."
-                } for row in rows
-            ]
+            return [{
+                "inzamelroute": row["inzamelroute"],
+                "datum": row["datum"],
+                "melding": "Let op: pakket komt niet overeen met uw adres. Mogelijk moet dit worden aangepast."
+            } for row in rows]
 
         cur.close()
         conn.close()
