@@ -49,17 +49,32 @@ def get_route(
         raise HTTPException(status_code=400, detail="Minimaal één fractie vereist.")
 
     like_clauses = " OR ".join(["A.INZAMELROUTE LIKE %s" for _ in fractie_list])
-    params = [f"%{f}%" for f in fractie_list] + [postcode]
+    base_params = [f"%{f}%" for f in fractie_list] + [postcode]
 
     try:
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
+        # Stap 1: Haal pakket op van opgegeven adres
+        cur.execute("""
+            SELECT pakket FROM AANSLUITING_PAKKET
+            WHERE REPLACE(postcode, ' ', '') = %s AND huisnummer::INT = %s AND huisnummertoevoeging IS NULL
+            LIMIT 1
+        """, [postcode, huisnummer_int])
+        pakket_row = cur.fetchone()
+        if not pakket_row:
+            cur.close()
+            conn.close()
+            return []
+
+        referentie_pakket = pakket_row["pakket"]
+
+        # Stap 2: Loop door nabije huisnummers
         offset = 0
-        max_offset = 50  # zoek binnen 50 huisnummers afstand
+        max_offset = 50
 
         while offset <= max_offset:
-            query = f"""
+            cur.execute(f"""
                 SELECT 
                     I.INZAMELROUTE, 
                     I.DATUM,
@@ -76,37 +91,30 @@ def get_route(
                     AND ABS(A.HUISNUMMER::INT - %s) = %s
                 ORDER BY I.DATUM ASC
                 LIMIT 3
-            """
+            """, base_params + [huisnummer_int, offset])
 
-            cur.execute(query, params + [huisnummer_int, offset])
             result = cur.fetchone()
-
             if result:
-                # Controleer pakketovereenkomst
-                pakket_query = """
+                hn = int(result["huisnummer"])
+                toevoeging = result["huisnummertoevoeging"]
+
+                # Controleer of pakket hetzelfde is
+                cur.execute("""
                     SELECT 1 FROM AANSLUITING_PAKKET
-                    WHERE REPLACE(POSTCODE, ' ', '') = %s AND HUISNUMMER::INT = %s AND HUISNUMMERTOEVOEGING IS NOT DISTINCT FROM %s
-                      AND PAKKET = (
-                          SELECT PAKKET FROM AANSLUITING_PAKKET
-                          WHERE REPLACE(POSTCODE, ' ', '') = %s AND HUISNUMMER::INT = %s AND HUISNUMMERTOEVOEGING IS NOT DISTINCT FROM %s
-                          LIMIT 1
-                      )
-                """
-                cur.execute(
-                    pakket_query,
-                    [postcode, huisnummer_int, None, postcode, huisnummer_int, None]
-                )
+                    WHERE REPLACE(postcode, ' ', '') = %s AND huisnummer::INT = %s AND huisnummertoevoeging IS NOT DISTINCT FROM %s
+                      AND pakket = %s
+                    LIMIT 1
+                """, [postcode, hn, toevoeging, referentie_pakket])
+
                 if cur.fetchone():
                     cur.close()
                     conn.close()
-                    return [
-                        {
-                            "inzamelroute": result["inzamelroute"],
-                            "datum": result["datum"],
-                            "postcode": result["postcode"],
-                            "huisnummer": result["huisnummer"]
-                        }
-                    ]
+                    return [{
+                        "inzamelroute": result["inzamelroute"],
+                        "datum": result["datum"],
+                        "postcode": result["postcode"],
+                        "huisnummer": result["huisnummer"]
+                    }]
 
             offset += 1
 
