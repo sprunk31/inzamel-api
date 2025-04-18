@@ -75,7 +75,7 @@ def get_route(
                     AND REPLACE(A.POSTCODE, ' ', '') = %s
                     AND ABS(A.HUISNUMMER::INT - %s) = %s
                 ORDER BY I.DATUM ASC
-                LIMIT 1
+                LIMIT 3
             """
 
             cur.execute(query, params + [huisnummer_int, offset])
