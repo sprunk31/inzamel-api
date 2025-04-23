@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Depends, Header
 from typing import List, Optional
 from pydantic import BaseModel
 import psycopg2
@@ -27,6 +27,12 @@ def get_connection():
         password=config["password"]
     )
 
+# ✅ API Key beveiliging
+def verify_api_key(x_api_key: str = Header(...)):
+    expected_key = os.getenv("API_KEY")
+    if x_api_key != expected_key:
+        raise HTTPException(status_code=401, detail="Ongeldige API sleutel")
+
 class RouteResult(BaseModel):
     inzamelroute: str
     datum: date
@@ -38,7 +44,8 @@ class RouteResult(BaseModel):
 def get_route(
     postcode: str = Query(..., min_length=6, max_length=7),
     huisnummer: str = Query(...),
-    fracties: str = Query(...)
+    fracties: str = Query(...),
+    _: str = Depends(verify_api_key)
 ):
     postcode = postcode.upper().replace(" ", "")
     fractie_raw_list = [f.strip().upper() for f in fracties.split("/") if f.strip()]
