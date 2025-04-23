@@ -41,7 +41,15 @@ def get_route(
     fracties: str = Query(...)
 ):
     postcode = postcode.upper().replace(" ", "")
-    fractie_list = [f.strip().upper() for f in fracties.split("/") if f.strip()]
+    fractie_raw_list = [f.strip().upper() for f in fracties.split("/") if f.strip()]
+
+    # Voeg 'MIX' toe als 'RST' is opgegeven
+    fractie_list = []
+    for f in fractie_raw_list:
+        fractie_list.append(f)
+        if f == "RST" and "MIX" not in fractie_list:
+            fractie_list.append("MIX")
+
     huisnummer_int = int(re.match(r"\d+", huisnummer).group()) if huisnummer else 0
 
     if not fractie_list:
