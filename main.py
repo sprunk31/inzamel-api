@@ -69,6 +69,28 @@ def get_route(
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
+        # 🔎 Check of 'Afval' wel is gekoppeld aan dit adres, anders geef melding terug
+        if "AFVAL" in fractie_list:
+            cur.execute("""
+                SELECT 1 FROM AANSLUITING_INZAMELROUTE
+                WHERE REPLACE(postcode, ' ', '') = %s
+                  AND huisnummer::INT = %s
+                  AND inzamelroute ILIKE '%%Afval%%'
+                LIMIT 1
+            """, [postcode, huisnummer_int])
+
+            if not cur.fetchone():
+                cur.close()
+                conn.close()
+                return [{
+                    "inzamelroute": None,
+                    "datum": None,
+                    "postcode": postcode,
+                    "huisnummer": huisnummer,
+                    "melding": "Afval is (nog) niet gekoppeld aan dit adres. Neem contact op om dit te laten corrigeren."
+                }]
+
+        # 📦 Haal pakket op
         cur.execute("""
             SELECT pakket FROM AANSLUITING_PAKKET
             WHERE REPLACE(postcode, ' ', '') = %s AND huisnummer::INT = %s AND huisnummertoevoeging IS NULL
@@ -172,7 +194,5 @@ def get_route(
             "melding": "Geen inzamelroute gevonden voor dit adres en fractie(s)."
         }]
 
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-#--
