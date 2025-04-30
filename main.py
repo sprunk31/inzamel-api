@@ -59,39 +59,6 @@ def get_route(
 
     huisnummer_int = int(re.match(r"\d+", huisnummer).group()) if huisnummer else 0
 
-    # ✅ Check op 'Afvalkalender (tijdelijke oplossing)' bij elk verzoek
-    try:
-        conn = get_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-
-        cur.execute("""
-            SELECT 1
-            FROM AANSLUITING_INZAMELROUTE AS A
-            JOIN INZAMELROUTE AS I ON A.INZAMELROUTE_ID = I.ID
-            WHERE REPLACE(A.POSTCODE, ' ', '') = %s
-              AND A.HUISNUMMER::INT = %s
-              AND I.INZAMELROUTE = %s
-            LIMIT 1
-        """, [postcode, huisnummer_int, "Afvalkalender (tijdelijke oplossing)"])
-
-        check_result = cur.fetchone()
-        cur.close()
-        conn.close()
-
-        if check_result:
-            return []  # Al gekoppeld, geen actie nodig
-
-        return [{
-            "inzamelroute": None,
-            "datum": None,
-            "postcode": postcode,
-            "huisnummer": huisnummer,
-            "melding": "Koppelen aan Afvalkalender (tijdelijke oplossing)"
-        }]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Fout bij controle op tijdelijke afvalkalender: " + str(e))
-
-    # Rest van de logica (alleen als bovenstaande niet geactiveerd is)
     if not fractie_list:
         raise HTTPException(status_code=400, detail="Minimaal één fractie vereist.")
 
@@ -205,5 +172,7 @@ def get_route(
             "melding": "Geen inzamelroute gevonden voor dit adres en fractie(s)."
         }]
 
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+#--
