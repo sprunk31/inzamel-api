@@ -62,7 +62,7 @@ def get_route(
     if not fractie_list:
         raise HTTPException(status_code=400, detail="Minimaal één fractie vereist.")
 
-    like_clauses = " OR ".join(["A.INZAMELROUTE LIKE %s" for _ in fractie_list])
+    like_clauses = " OR ".join(["I.INZAMELROUTE ILIKE %s" for _ in fractie_list])
     base_params = [f"%{f}%" for f in fractie_list] + [postcode]
 
     try:
