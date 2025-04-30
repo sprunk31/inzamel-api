@@ -7,7 +7,7 @@ import re
 
 app = FastAPI()
 
-# Databaseconfiguratie via omgevingsvariabelen (bijv. Railway)
+# DB-config vanuit omgevingsvariabelen
 config = {
     "host": os.getenv("DB_HOST"),
     "port": os.getenv("DB_PORT", 5432),
@@ -31,7 +31,7 @@ def verify_api_key(x_api_key: str = Header(...)):
     if x_api_key != expected_key:
         raise HTTPException(status_code=401, detail="Ongeldige API sleutel")
 
-# Antwoordmodel
+# Response model
 class AfvalCheckResponse(BaseModel):
     status: str
 
