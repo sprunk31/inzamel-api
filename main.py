@@ -139,7 +139,39 @@ def get_route(
             offset += 1
 
         if fallback_result:
+            # Zoek andere routes van deze aansluiting, maar sluit 'Afvalkalender (tijdelijke oplossing)' uit
+            cur.execute("""
+                SELECT DISTINCT I.INZAMELROUTE, I.DATUM
+                FROM AANSLUITING_INZAMELROUTE AS A
+                JOIN INZAMELROUTE AS I ON A.INZAMELROUTE_ID = I.ID
+                WHERE REPLACE(A.POSTCODE, ' ', '') = %s
+                  AND A.HUISNUMMER::INT = %s
+                  AND I.INZAMELROUTE != 'Afvalkalender (tijdelijke oplossing)'
+                  AND I.DATUM::DATE > CURRENT_DATE
+                ORDER BY I.DATUM ASC
+                LIMIT 3
+            """, [postcode, huisnummer_int])
+
+            alternatieve_rows = cur.fetchall()
+            cur.close()
+            conn.close()
+
+            if alternatieve_rows:
+                return [
+                    {
+                        "inzamelroute": row["inzamelroute"],
+                        "datum": row["datum"],
+                        "postcode": fallback_result["postcode"],
+                        "huisnummer": fallback_result["huisnummer"],
+                        "melding": "Let op: deze aansluiting is gekoppeld aan een route, maar staat (nog) niet op de officiële afvalkalender."
+                    }
+                    for row in alternatieve_rows
+                ]
+
+            # Geen alternatieve route gevonden, toon oorspronkelijke fallback zonder kalender
             gevonden_route = fallback_result["inzamelroute"]
+            conn = get_connection()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
             cur.execute("""
                 SELECT I.INZAMELROUTE, I.DATUM
                 FROM INZAMELROUTE AS I
