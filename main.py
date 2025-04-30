@@ -34,8 +34,8 @@ def verify_api_key(x_api_key: str = Header(...)):
         raise HTTPException(status_code=401, detail="Ongeldige API sleutel")
 
 class RouteResult(BaseModel):
-    inzamelroute: str
-    datum: date
+    inzamelroute: Optional[str] = None
+    datum: Optional[date] = None
     postcode: Optional[str] = None
     huisnummer: Optional[str] = None
     melding: Optional[str] = None
@@ -164,7 +164,14 @@ def get_route(
 
         cur.close()
         conn.close()
-        return []
+        return [{
+            "inzamelroute": None,
+            "datum": None,
+            "postcode": postcode,
+            "huisnummer": huisnummer,
+            "melding": "Geen inzamelroute gevonden voor dit adres en fractie(s)."
+        }]
+
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
