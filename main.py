@@ -91,7 +91,7 @@ def get_route(
                     A.HUISNUMMERTOEVOEGING
                 FROM INZAMELROUTE AS I
                 LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE_ID = I.ID
-                WHERE I.DATUM > CURRENT_DATE
+                WHERE I.DATUM::DATE > CURRENT_DATE
                     AND ({like_clauses})
                     AND REPLACE(A.POSTCODE, ' ', '') = %s
                     AND ABS(A.HUISNUMMER::INT - %s) = %s
@@ -118,7 +118,10 @@ def get_route(
                         SELECT I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER
                         FROM INZAMELROUTE AS I
                         LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE_ID = I.ID
-                        WHERE I.INZAMELROUTE = %s AND REPLACE(A.POSTCODE, ' ', '') = %s AND A.HUISNUMMER::INT = %s
+                        WHERE I.INZAMELROUTE = %s 
+                          AND I.DATUM::DATE > CURRENT_DATE
+                          AND REPLACE(A.POSTCODE, ' ', '') = %s 
+                          AND A.HUISNUMMER::INT = %s
                         ORDER BY I.DATUM ASC
                         LIMIT 3
                     """, [gevonden_route, postcode, hn])
@@ -140,7 +143,8 @@ def get_route(
             cur.execute("""
                 SELECT I.INZAMELROUTE, I.DATUM
                 FROM INZAMELROUTE AS I
-                WHERE I.INZAMELROUTE = %s AND I.DATUM > CURRENT_DATE
+                WHERE I.INZAMELROUTE = %s 
+                  AND I.DATUM::DATE > CURRENT_DATE
                 ORDER BY I.DATUM ASC
                 LIMIT 3
             """, [gevonden_route])
