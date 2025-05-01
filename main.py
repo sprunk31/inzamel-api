@@ -38,14 +38,12 @@ class RouteResult(BaseModel):
     datum: Optional[date] = None
     postcode: Optional[str] = None
     huisnummer: Optional[str] = None
-    huisnummertoevoeging: Optional[str] = None
     melding: Optional[str] = None
 
 @app.get("/api/route", response_model=List[RouteResult])
 def get_route(
     postcode: str = Query(..., min_length=6, max_length=7),
     huisnummer: str = Query(...),
-    huisnummertoevoeging: Optional[str] = Query(None),
     fracties: str = Query(...),
     _: str = Depends(verify_api_key)
 ):
@@ -117,7 +115,7 @@ def get_route(
                 if pakket_check and referentie_pakket and pakket_check["pakket"] == referentie_pakket:
                     gevonden_route = result["inzamelroute"]
                     cur.execute("""
-                        SELECT I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER, A.HUISNUMMERTOEVOEGING
+                        SELECT I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER
                         FROM INZAMELROUTE AS I
                         LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE_ID = I.ID
                         WHERE I.INZAMELROUTE = %s 
@@ -130,19 +128,12 @@ def get_route(
                     rows = cur.fetchall()
                     cur.close()
                     conn.close()
-                    return [{
-                        "inzamelroute": row["inzamelroute"],
-                        "datum": row["datum"],
-                        "postcode": row["postcode"],
-                        "huisnummer": row["huisnummer"],
-                        "huisnummertoevoeging": row["huisnummertoevoeging"]
-                    } for row in rows]
+                    return [{"inzamelroute": row["inzamelroute"], "datum": row["datum"], "postcode": row["postcode"], "huisnummer": row["huisnummer"]} for row in rows]
                 elif not fallback_result:
                     fallback_result = {
                         "inzamelroute": result["inzamelroute"],
                         "postcode": result["postcode"],
-                        "huisnummer": result["huisnummer"],
-                        "huisnummertoevoeging": result["huisnummertoevoeging"]
+                        "huisnummer": result["huisnummer"]
                     }
 
             offset += 1
@@ -166,7 +157,6 @@ def get_route(
                     "datum": row["datum"],
                     "postcode": fallback_result["postcode"],
                     "huisnummer": fallback_result["huisnummer"],
-                    "huisnummertoevoeging": fallback_result["huisnummertoevoeging"],
                     "melding": "Let op: pakket komt niet overeen met uw adres. Mogelijk moet dit worden aangepast."
                 }
                 for row in rows
@@ -179,7 +169,6 @@ def get_route(
             "datum": None,
             "postcode": postcode,
             "huisnummer": huisnummer,
-            "huisnummertoevoeging": huisnummertoevoeging,
             "melding": "Geen inzamelroute gevonden voor dit adres en fractie(s)."
         }]
 
