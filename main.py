@@ -38,14 +38,12 @@ class RouteResult(BaseModel):
     datum: Optional[date] = None
     postcode: Optional[str] = None
     huisnummer: Optional[str] = None
-    huisnummertoevoeging:Optional[str] = None
     melding: Optional[str] = None
 
 @app.get("/api/route", response_model=List[RouteResult])
 def get_route(
     postcode: str = Query(..., min_length=6, max_length=7),
     huisnummer: str = Query(...),
-    huisnummertoevoeging: Optional[str] = Query(None),
     fracties: str = Query(...),
     _: str = Depends(verify_api_key)
 ):
@@ -71,14 +69,11 @@ def get_route(
         conn = get_connection()
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-        # Haal het referentie-pakket op
         cur.execute("""
             SELECT pakket FROM AANSLUITING_PAKKET
-            WHERE REPLACE(postcode, ' ', '') = %s 
-              AND huisnummer::INT = %s 
-              AND huisnummertoevoeging IS NOT DISTINCT FROM %s
+            WHERE REPLACE(postcode, ' ', '') = %s AND huisnummer::INT = %s AND huisnummertoevoeging IS NULL
             LIMIT 1
-        """, [postcode, huisnummer_int, huisnummertoevoeging])
+        """, [postcode, huisnummer_int])
         pakket_row = cur.fetchone()
         referentie_pakket = pakket_row["pakket"] if pakket_row else None
 
@@ -100,10 +95,9 @@ def get_route(
                     AND ({like_clauses})
                     AND REPLACE(A.POSTCODE, ' ', '') = %s
                     AND ABS(A.HUISNUMMER::INT - %s) = %s
-                    AND A.huisnummertoevoeging IS NOT DISTINCT FROM %s
                 ORDER BY I.DATUM ASC
                 LIMIT 3
-            """, base_params + [huisnummer_int, offset, huisnummertoevoeging])
+            """, base_params + [huisnummer_int, offset])
 
             result = cur.fetchone()
             if result:
@@ -112,11 +106,10 @@ def get_route(
 
                 cur.execute("""
                     SELECT pakket FROM AANSLUITING_PAKKET
-                    WHERE REPLACE(postcode, ' ', '') = %s 
-                      AND huisnummer::INT = %s 
-                      AND huisnummertoevoeging IS NOT DISTINCT FROM %s
+                    WHERE REPLACE(postcode, ' ', '') = %s AND huisnummer::INT = %s AND huisnummertoevoeging IS NOT DISTINCT FROM %s
                     LIMIT 1
                 """, [postcode, hn, toevoeging])
+
                 pakket_check = cur.fetchone()
 
                 if pakket_check and referentie_pakket and pakket_check["pakket"] == referentie_pakket:
@@ -129,19 +122,13 @@ def get_route(
                           AND I.DATUM::DATE > CURRENT_DATE
                           AND REPLACE(A.POSTCODE, ' ', '') = %s 
                           AND A.HUISNUMMER::INT = %s
-                          AND A.huisnummertoevoeging IS NOT DISTINCT FROM %s
                         ORDER BY I.DATUM ASC
                         LIMIT 3
-                    """, [gevonden_route, postcode, hn, toevoeging])
+                    """, [gevonden_route, postcode, hn])
                     rows = cur.fetchall()
                     cur.close()
                     conn.close()
-                    return [{
-                        "inzamelroute": row["inzamelroute"],
-                        "datum": row["datum"],
-                        "postcode": row["postcode"],
-                        "huisnummer": row["huisnummer"]
-                    } for row in rows]
+                    return [{"inzamelroute": row["inzamelroute"], "datum": row["datum"], "postcode": row["postcode"], "huisnummer": row["huisnummer"]} for row in rows]
                 elif not fallback_result:
                     fallback_result = {
                         "inzamelroute": result["inzamelroute"],
@@ -185,9 +172,10 @@ def get_route(
             "melding": "Geen inzamelroute gevonden voor dit adres en fractie(s)."
         }]
 
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+#--correct
 
 class AfvalCheckResponse(BaseModel):
     status: str
