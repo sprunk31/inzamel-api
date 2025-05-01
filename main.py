@@ -60,8 +60,6 @@ def get_route(
             fractie_list.append("MIX")
 
     huisnummer_int = int(re.match(r"\d+", huisnummer).group()) if huisnummer else 0
-    if huisnummertoevoeging == "empty":
-        huisnummertoevoeging = None
     like_clauses = " OR ".join(["A.INZAMELROUTE LIKE %s" for _ in fractie_list])
     base_params = [f"%{f}%" for f in fractie_list] + [postcode]
 
