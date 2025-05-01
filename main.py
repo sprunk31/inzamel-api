@@ -52,7 +52,7 @@ def get_route(
     postcode = postcode.replace(" ", "").upper()
     fractie_raw_list = [f.strip().upper() for f in fracties.split("/") if f.strip()]
 
-    # Voeg MIX toe als RST opgegeven is
+    # Voeg MIX toe bij RST
     fractie_list = []
     for f in fractie_raw_list:
         fractie_list.append(f)
@@ -73,7 +73,7 @@ def get_route(
         )
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-        # Ophalen van het pakket van het opgegeven adres
+        # Pakket ophalen
         cur.execute("""
             SELECT pakket FROM AANSLUITING_PAKKET
             WHERE REPLACE(postcode, ' ', '') = %s AND huisnummer::INT = %s AND huisnummertoevoeging IS NOT DISTINCT FROM %s
@@ -86,8 +86,8 @@ def get_route(
         max_offset = 50
         fallback_result = None
 
-        # Reusable functie
-        def fetch_and_return(route, pc, hn, toevoeging, melding=None, exact_match=False):
+        # Zoekfunctie voor exact adres of gevonden adres
+        def fetch_and_return(route, pc, hn, toevoeging, melding=None):
             cur.execute("""
                 SELECT I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER, A.HUISNUMMERTOEVOEGING
                 FROM INZAMELROUTE I
@@ -107,7 +107,7 @@ def get_route(
                 "postcode": r["postcode"],
                 "huisnummer": r["huisnummer"],
                 "huisnummertoevoeging": r["huisnummertoevoeging"],
-                "melding": "Aansluiting aanwezig op route" if exact_match else melding
+                "melding": melding
             } for r in rows]
 
         # 1. Exacte match
@@ -124,13 +124,7 @@ def get_route(
         """, base_params + [huisnummer_int, huisnummertoevoeging])
         exact = cur.fetchone()
         if exact:
-            return fetch_and_return(
-                exact["inzamelroute"],
-                exact["postcode"],
-                exact["huisnummer"],
-                exact["huisnummertoevoeging"],
-                exact_match=True
-            )
+            return fetch_and_return(exact["inzamelroute"], exact["postcode"], exact["huisnummer"], exact["huisnummertoevoeging"])
 
         # 2. Zelfde huisnummer, andere toevoeging
         cur.execute(f"""
@@ -174,6 +168,7 @@ def get_route(
                     LIMIT 1
                 """, [postcode, int(result["huisnummer"]), result["huisnummertoevoeging"]])
                 check = cur.fetchone()
+
                 if check and referentie_pakket and check["pakket"] == referentie_pakket:
                     return fetch_and_return(result["inzamelroute"], result["postcode"], result["huisnummer"], result["huisnummertoevoeging"])
                 elif not fallback_result:
@@ -183,6 +178,7 @@ def get_route(
                         "huisnummer": result["huisnummer"],
                         "huisnummertoevoeging": result["huisnummertoevoeging"]
                     }
+
             offset += 1
 
         # Fallback met melding
@@ -198,6 +194,7 @@ def get_route(
             conn.close()
             return rows
 
+        # Geen resultaat
         cur.close()
         conn.close()
         return [{
