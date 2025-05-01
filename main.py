@@ -10,7 +10,6 @@ import os
 
 app = FastAPI()
 
-# Config uit environment
 config = {
     "host": os.getenv("DB_HOST"),
     "port": os.getenv("DB_PORT", 5432),
@@ -19,13 +18,21 @@ config = {
     "password": os.getenv("DB_PASS")
 }
 
-# API Key check
+def get_connection():
+    return psycopg2.connect(
+        host=config["host"],
+        port=config["port"],
+        dbname=config["dbname"],
+        user=config["user"],
+        password=config["password"]
+    )
+
+# ✅ API Key beveiliging
 def verify_api_key(x_api_key: str = Header(...)):
     expected_key = os.getenv("API_KEY")
     if x_api_key != expected_key:
         raise HTTPException(status_code=401, detail="Ongeldige API sleutel")
 
-# Response model
 class RouteResult(BaseModel):
     inzamelroute: Optional[str] = None
     datum: Optional[date] = None
@@ -219,7 +226,6 @@ def get_route(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 #--
 
 class AfvalCheckResponse(BaseModel):
