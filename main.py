@@ -219,3 +219,44 @@ def get_route(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+#--
+
+class AfvalCheckResponse(BaseModel):
+    status: str
+
+@app.get("/api/check-afval", response_model=AfvalCheckResponse)
+def check_afval(
+    postcode: str = Query(..., min_length=6, max_length=7),
+    huisnummer: str = Query(...),
+    huisnummertoevoeging: Optional[str] = Query(None),
+    _: str = Depends(verify_api_key)
+):
+    postcode_clean = postcode.replace(" ", "").upper()
+    huisnummer_int = int(re.match(r"\d+", huisnummer).group()) if huisnummer else 0
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT 1 FROM AANSLUITING_INZAMELROUTE
+            WHERE REPLACE(postcode, ' ', '') = %s
+              AND huisnummer::INT = %s
+              AND huisnummertoevoeging IS NOT DISTINCT FROM %s
+              AND inzamelroute ILIKE '%%Afval%%'
+            LIMIT 1
+        """, [postcode_clean, huisnummer_int, huisnummertoevoeging])
+
+        resultaat = cur.fetchone()
+
+        cur.close()
+        conn.close()
+
+        if resultaat:
+            return {"status": "Aanwezig"}
+        else:
+            return {"status": "Koppelen aan afvalkalender"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
