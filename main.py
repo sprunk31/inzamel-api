@@ -38,6 +38,7 @@ class RouteResult(BaseModel):
     datum: Optional[date] = None
     postcode: Optional[str] = None
     huisnummer: Optional[str] = None
+    huisnummertoevoeging: Optional[str] = None
     melding: Optional[str] = None
 
 @app.get("/api/route", response_model=List[RouteResult])
