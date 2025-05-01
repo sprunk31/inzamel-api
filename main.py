@@ -10,6 +10,7 @@ import os
 
 app = FastAPI()
 
+# Config uit environment
 config = {
     "host": os.getenv("DB_HOST"),
     "port": os.getenv("DB_PORT", 5432),
@@ -18,39 +19,34 @@ config = {
     "password": os.getenv("DB_PASS")
 }
 
-def get_connection():
-    return psycopg2.connect(
-        host=config["host"],
-        port=config["port"],
-        dbname=config["dbname"],
-        user=config["user"],
-        password=config["password"]
-    )
-
-# ✅ API Key beveiliging
+# API Key check
 def verify_api_key(x_api_key: str = Header(...)):
     expected_key = os.getenv("API_KEY")
     if x_api_key != expected_key:
         raise HTTPException(status_code=401, detail="Ongeldige API sleutel")
 
+# Response model
 class RouteResult(BaseModel):
     inzamelroute: Optional[str] = None
     datum: Optional[date] = None
     postcode: Optional[str] = None
     huisnummer: Optional[str] = None
+    huisnummertoevoeging: Optional[str] = None
     melding: Optional[str] = None
 
+# Route endpoint
 @app.get("/api/route", response_model=List[RouteResult])
 def get_route(
     postcode: str = Query(..., min_length=6, max_length=7),
     huisnummer: str = Query(...),
+    huisnummertoevoeging: Optional[str] = Query(None),
     fracties: str = Query(...),
     _: str = Depends(verify_api_key)
 ):
-    postcode = postcode.upper().replace(" ", "")
+    postcode = postcode.replace(" ", "").upper()
     fractie_raw_list = [f.strip().upper() for f in fracties.split("/") if f.strip()]
 
-    # Voeg 'MIX' toe als 'RST' is opgegeven
+    # Voeg 'MIX' toe bij 'RST'
     fractie_list = []
     for f in fractie_raw_list:
         fractie_list.append(f)
@@ -66,14 +62,23 @@ def get_route(
     base_params = [f"%{f}%" for f in fractie_list] + [postcode]
 
     try:
-        conn = get_connection()
+        conn = psycopg2.connect(
+            host=config["host"],
+            port=config["port"],
+            dbname=config["dbname"],
+            user=config["user"],
+            password=config["password"]
+        )
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
+        # Pakket ophalen
         cur.execute("""
             SELECT pakket FROM AANSLUITING_PAKKET
-            WHERE REPLACE(postcode, ' ', '') = %s AND huisnummer::INT = %s AND huisnummertoevoeging IS NULL
+            WHERE REPLACE(postcode, ' ', '') = %s
+              AND huisnummer::INT = %s
+              AND huisnummertoevoeging IS NOT DISTINCT FROM %s
             LIMIT 1
-        """, [postcode, huisnummer_int])
+        """, [postcode, huisnummer_int, huisnummertoevoeging])
         pakket_row = cur.fetchone()
         referentie_pakket = pakket_row["pakket"] if pakket_row else None
 
@@ -81,70 +86,108 @@ def get_route(
         max_offset = 50
         fallback_result = None
 
+        # 1. Exacte match (postcode + huisnummer + toevoeging)
+        cur.execute(f"""
+            SELECT 
+                I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER, A.HUISNUMMERTOEVOEGING
+            FROM INZAMELROUTE I
+            LEFT JOIN AANSLUITING_INZAMELROUTE A ON A.INZAMELROUTE_ID = I.ID
+            WHERE I.DATUM > CURRENT_DATE
+              AND ({like_clauses})
+              AND REPLACE(A.POSTCODE, ' ', '') = %s
+              AND A.HUISNUMMER::INT = %s
+              AND A.HUISNUMMERTOEVOEGING IS NOT DISTINCT FROM %s
+            ORDER BY I.DATUM ASC
+            LIMIT 3
+        """, base_params + [huisnummer_int, huisnummertoevoeging])
+        result = cur.fetchall()
+
+        if result:
+            cur.close()
+            conn.close()
+            return [dict(row) for row in result]
+
+        # 2. Zelfde huisnummer, andere toevoeging
+        cur.execute(f"""
+            SELECT 
+                I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER, A.HUISNUMMERTOEVOEGING
+            FROM INZAMELROUTE I
+            LEFT JOIN AANSLUITING_INZAMELROUTE A ON A.INZAMELROUTE_ID = I.ID
+            WHERE I.DATUM > CURRENT_DATE
+              AND ({like_clauses})
+              AND REPLACE(A.POSTCODE, ' ', '') = %s
+              AND A.HUISNUMMER::INT = %s
+            ORDER BY I.DATUM ASC
+            LIMIT 3
+        """, base_params + [huisnummer_int])
+        result = cur.fetchall()
+
+        if result:
+            hn = int(result[0]["huisnummer"])
+            toevoeging = result[0]["huisnummertoevoeging"]
+            cur.execute("""
+                SELECT pakket FROM AANSLUITING_PAKKET
+                WHERE REPLACE(postcode, ' ', '') = %s
+                  AND huisnummer::INT = %s
+                  AND huisnummertoevoeging IS NOT DISTINCT FROM %s
+                LIMIT 1
+            """, [postcode, hn, toevoeging])
+            pakket_check = cur.fetchone()
+
+            if pakket_check and pakket_check["pakket"] == referentie_pakket:
+                cur.close()
+                conn.close()
+                return [dict(row) for row in result]
+
+        # 3. Nabije huisnummers
         while offset <= max_offset:
             cur.execute(f"""
                 SELECT 
-                    I.INZAMELROUTE, 
-                    I.DATUM,
-                    A.POSTCODE,
-                    A.HUISNUMMER,
-                    A.HUISNUMMERTOEVOEGING
-                FROM INZAMELROUTE AS I
-                LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE_ID = I.ID
-                WHERE I.DATUM::DATE > CURRENT_DATE
-                    AND ({like_clauses})
-                    AND REPLACE(A.POSTCODE, ' ', '') = %s
-                    AND ABS(A.HUISNUMMER::INT - %s) = %s
+                    I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER, A.HUISNUMMERTOEVOEGING
+                FROM INZAMELROUTE I
+                LEFT JOIN AANSLUITING_INZAMELROUTE A ON A.INZAMELROUTE_ID = I.ID
+                WHERE I.DATUM > CURRENT_DATE
+                  AND ({like_clauses})
+                  AND REPLACE(A.POSTCODE, ' ', '') = %s
+                  AND ABS(A.HUISNUMMER::INT - %s) = %s
                 ORDER BY I.DATUM ASC
                 LIMIT 3
             """, base_params + [huisnummer_int, offset])
+            result = cur.fetchall()
 
-            result = cur.fetchone()
             if result:
-                hn = int(result["huisnummer"])
-                toevoeging = result["huisnummertoevoeging"]
-
+                hn = int(result[0]["huisnummer"])
+                toevoeging = result[0]["huisnummertoevoeging"]
                 cur.execute("""
                     SELECT pakket FROM AANSLUITING_PAKKET
-                    WHERE REPLACE(postcode, ' ', '') = %s AND huisnummer::INT = %s AND huisnummertoevoeging IS NOT DISTINCT FROM %s
+                    WHERE REPLACE(postcode, ' ', '') = %s
+                      AND huisnummer::INT = %s
+                      AND huisnummertoevoeging IS NOT DISTINCT FROM %s
                     LIMIT 1
                 """, [postcode, hn, toevoeging])
-
                 pakket_check = cur.fetchone()
 
-                if pakket_check and referentie_pakket and pakket_check["pakket"] == referentie_pakket:
-                    gevonden_route = result["inzamelroute"]
-                    cur.execute("""
-                        SELECT I.INZAMELROUTE, I.DATUM, A.POSTCODE, A.HUISNUMMER
-                        FROM INZAMELROUTE AS I
-                        LEFT JOIN AANSLUITING_INZAMELROUTE AS A ON A.INZAMELROUTE_ID = I.ID
-                        WHERE I.INZAMELROUTE = %s 
-                          AND I.DATUM::DATE > CURRENT_DATE
-                          AND REPLACE(A.POSTCODE, ' ', '') = %s 
-                          AND A.HUISNUMMER::INT = %s
-                        ORDER BY I.DATUM ASC
-                        LIMIT 3
-                    """, [gevonden_route, postcode, hn])
-                    rows = cur.fetchall()
+                if pakket_check and pakket_check["pakket"] == referentie_pakket:
                     cur.close()
                     conn.close()
-                    return [{"inzamelroute": row["inzamelroute"], "datum": row["datum"], "postcode": row["postcode"], "huisnummer": row["huisnummer"]} for row in rows]
+                    return [dict(row) for row in result]
                 elif not fallback_result:
                     fallback_result = {
-                        "inzamelroute": result["inzamelroute"],
-                        "postcode": result["postcode"],
-                        "huisnummer": result["huisnummer"]
+                        "inzamelroute": result[0]["inzamelroute"],
+                        "postcode": result[0]["postcode"],
+                        "huisnummer": result[0]["huisnummer"],
+                        "huisnummertoevoeging": result[0]["huisnummertoevoeging"]
                     }
 
             offset += 1
 
+        # Fallback met melding
         if fallback_result:
             gevonden_route = fallback_result["inzamelroute"]
             cur.execute("""
                 SELECT I.INZAMELROUTE, I.DATUM
-                FROM INZAMELROUTE AS I
-                WHERE I.INZAMELROUTE = %s 
-                  AND I.DATUM::DATE > CURRENT_DATE
+                FROM INZAMELROUTE I
+                WHERE I.INZAMELROUTE = %s AND I.DATUM > CURRENT_DATE
                 ORDER BY I.DATUM ASC
                 LIMIT 3
             """, [gevonden_route])
@@ -157,11 +200,12 @@ def get_route(
                     "datum": row["datum"],
                     "postcode": fallback_result["postcode"],
                     "huisnummer": fallback_result["huisnummer"],
+                    "huisnummertoevoeging": fallback_result["huisnummertoevoeging"],
                     "melding": "Let op: pakket komt niet overeen met uw adres. Mogelijk moet dit worden aangepast."
-                }
-                for row in rows
+                } for row in rows
             ]
 
+        # Geen resultaat
         cur.close()
         conn.close()
         return [{
@@ -169,49 +213,9 @@ def get_route(
             "datum": None,
             "postcode": postcode,
             "huisnummer": huisnummer,
+            "huisnummertoevoeging": huisnummertoevoeging,
             "melding": "Geen inzamelroute gevonden voor dit adres en fractie(s)."
         }]
-
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-#--
-
-class AfvalCheckResponse(BaseModel):
-    status: str
-
-@app.get("/api/check-afval", response_model=AfvalCheckResponse)
-def check_afval(
-    postcode: str = Query(..., min_length=6, max_length=7),
-    huisnummer: str = Query(...),
-    huisnummertoevoeging: Optional[str] = Query(None),
-    _: str = Depends(verify_api_key)
-):
-    postcode_clean = postcode.replace(" ", "").upper()
-    huisnummer_int = int(re.match(r"\d+", huisnummer).group()) if huisnummer else 0
-
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-
-        cur.execute("""
-            SELECT 1 FROM AANSLUITING_INZAMELROUTE
-            WHERE REPLACE(postcode, ' ', '') = %s
-              AND huisnummer::INT = %s
-              AND huisnummertoevoeging IS NOT DISTINCT FROM %s
-              AND inzamelroute ILIKE '%%Afval%%'
-            LIMIT 1
-        """, [postcode_clean, huisnummer_int, huisnummertoevoeging])
-
-        resultaat = cur.fetchone()
-
-        cur.close()
-        conn.close()
-
-        if resultaat:
-            return {"status": "Aanwezig"}
-        else:
-            return {"status": "Koppelen aan afvalkalender"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
